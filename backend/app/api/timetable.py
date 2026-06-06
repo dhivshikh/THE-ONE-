@@ -22,7 +22,7 @@ import uuid
 import time as time_module
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.api.subjects import integrity_repair
@@ -30,7 +30,7 @@ from app.api.subjects import integrity_repair
 from app.db.session import get_db, SessionLocal
 from app.db.models import (
     Allocation, Semester, Teacher, Subject, Room,
-    Substitution, SubstitutionStatus,
+    Substitution, SubstitutionStatus, MentorPeriod,
     StructuredCompositeBasketSubject, SemesterTemplate,
 )
 from app.schemas.schemas import (
@@ -416,6 +416,9 @@ def _resolve_slot_names(
     CRITICAL FIX: NEVER return "ELECTIVE" as subject name/code.
     Always return the actual subject's name and code even for elective slots.
     """
+    if getattr(primary_alloc, 'academic_component', None) == "mentor_period":
+        return "MENTOR PERIOD", "MENTOR PERIOD"
+
     if is_pure_elective_slot:
         # Try elective basket name (already eager-loaded)
         basket_name = None
@@ -512,10 +515,37 @@ def get_teacher_timetable(
             if sub.substitute_teacher:
                 sub_teacher_names[sub.allocation_id] = sub.substitute_teacher.name
 
+    # Mentor Period settings for teacher timetable injection
+    mentor_setting = db.query(MentorPeriod).first()
+    has_mentor = False
+    if mentor_setting and mentor_setting.is_enabled and mentor_setting.is_scheduled:
+        target_depts = [int(x) for x in mentor_setting.departments.split(',')] if mentor_setting.departments else []
+        if not target_depts or teacher.dept_id in target_depts:
+            has_mentor = True
+
     days = []
     for day_idx in range(5):
         slots = []
         for slot_idx in range(settings.SLOTS_PER_DAY):
+            if has_mentor and day_idx == mentor_setting.scheduled_day and slot_idx == mentor_setting.scheduled_slot:
+                slots.append(TimetableSlot(
+                    allocation_id=0,
+                    teacher_name=teacher.name,
+                    teacher_id=teacher.id,
+                    subject_name="MENTOR PERIOD",
+                    subject_code="MENTOR PERIOD",
+                    room_name="TBD",
+                    batch_name=None,
+                    batch_allocations=[],
+                    component_type="theory",
+                    academic_component="mentor_period",
+                    is_lab=False,
+                    is_elective=False,
+                    is_substituted=False,
+                    substitute_teacher_name=None
+                ))
+                continue
+                
             try:
                 day_allocs = [a for a in allocations if a.day == day_idx and a.slot == slot_idx]
                 is_pure_elective = all(getattr(a, 'is_elective', False) for a in day_allocs)
@@ -669,11 +699,9 @@ def export_semester_pdf(semester_id: int, db: Session = Depends(get_db)):
         scb_map = _preload_scb_map(db)
 
         pdf_service = TimetablePDFService(db)
-        pdf_buffer = pdf_service.generate_semester_pdf(semester, allocations, scb_map)
+        pdf_buffer = pdf_service.generate_semester_pdf(semester)
 
-        return StreamingResponse(
-            pdf_buffer,
-            media_type="application/pdf",
+        return Response(content=pdf_buffer, media_type="application/pdf",
             headers={
                 "Content-Disposition": f"attachment; filename=timetable_{semester.code}.pdf"
             }
@@ -683,7 +711,19 @@ def export_semester_pdf(semester_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"PDF export failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"PDF generation failed: {str(e)}")
-
+@router.get("/export/pdf/zip")
+def export_all_pdf_zip(db: Session = Depends(get_db)):
+    try:
+        pdf_service = TimetablePDFService(db)
+        zip_bytes = pdf_service.generate_all_timetables_pdf_zip()
+        return StreamingResponse(
+            BytesIO(zip_bytes),
+            media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=all_timetables_pdf.zip"}
+        )
+    except Exception as e:
+        logger.error(f"Bulk PDF ZIP export failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Bulk PDF ZIP export failed: {str(e)}")
 
 @router.get("/export/teacher/{teacher_id}")
 def export_teacher_pdf(teacher_id: int, db: Session = Depends(get_db)):
@@ -705,9 +745,7 @@ def export_teacher_pdf(teacher_id: int, db: Session = Depends(get_db)):
         pdf_service = TimetablePDFService(db)
         pdf_buffer = pdf_service.generate_teacher_pdf(teacher, allocations, scb_map)
 
-        return StreamingResponse(
-            pdf_buffer,
-            media_type="application/pdf",
+        return Response(content=pdf_buffer, media_type="application/pdf",
             headers={
                 "Content-Disposition": f"attachment; filename=timetable_{teacher.name}.pdf"
             }
@@ -726,9 +764,7 @@ def export_semester_excel(semester_id: int, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="Semester not found")
         excel_service = TimetableExcelService(db)
         excel_buffer = excel_service.generate_semester_excel(semester_id)
-        return StreamingResponse(
-            excel_buffer,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        return Response(content=excel_buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": f"attachment; filename=timetable_{semester.code}.xlsx"}
         )
     except Exception as e:
@@ -740,13 +776,23 @@ def export_all_excel(db: Session = Depends(get_db)):
     try:
         excel_service = TimetableExcelService(db)
         excel_buffer = excel_service.generate_all_timetables_excel()
-        return StreamingResponse(
-            excel_buffer,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        return Response(content=excel_buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": "attachment; filename=all_timetables.xlsx"}
         )
     except Exception as e:
         logger.error(f"Bulk Excel export failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/export/excel/zip")
+def export_all_excel_zip(db: Session = Depends(get_db)):
+    try:
+        excel_service = TimetableExcelService(db)
+        zip_buffer = excel_service.generate_all_timetables_excel_zip()
+        return Response(content=zip_buffer, media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=all_timetables_excel.zip"}
+        )
+    except Exception as e:
+        logger.error(f"Bulk Excel ZIP export failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/export/excel/department/{dept_id}")

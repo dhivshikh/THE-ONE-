@@ -156,47 +156,53 @@ export default function TimetablePage() {
                     <h1>Timetable View</h1>
                     <p>View schedules by class or teacher</p>
                 </div>
-                <div className="page-header-actions">
-                    <button
-                        className="btn btn-secondary"
-                        onClick={handlePreviewPDF}
-                        disabled={!exportStatus.has_timetable}
-                        title={exportStatus.has_timetable ? 'Preview all timetables as PDF' : 'Generate a timetable first'}
-                    >
-                        <Eye size={16} />
-                        Preview PDF
-                    </button>
-                    <div className="dropdown" style={{display: 'inline-block', position: 'relative', marginLeft: '8px'}}>
+                    <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+                        <button
+                            className="btn btn-secondary"
+                            onClick={handlePreviewPDF}
+                            disabled={!exportStatus.has_timetable}
+                            title={exportStatus.has_timetable ? 'Preview timetable as PDF' : 'Generate a timetable first'}
+                        >
+                            <Eye size={16} />
+                            Preview PDF
+                        </button>
                         <button
                             className="btn btn-primary"
-                            onClick={() => setShowExportMenu(!showExportMenu)}
+                            onClick={() => handleDownload('pdf', 'semester')}
                             disabled={!exportStatus.has_timetable}
-                            title={exportStatus.has_timetable ? 'Export timetables' : 'Generate a timetable first'}
+                        >
+                            <FileText size={16} />
+                            Download PDF
+                        </button>
+                        <button
+                            className="btn btn-primary"
+                            onClick={() => handleDownload('excel', 'semester')}
+                            disabled={!exportStatus.has_timetable}
+                            style={{backgroundColor: '#2e7d32', color: 'white', borderColor: '#1b5e20'}}
                         >
                             <Download size={16} />
-                            Export Options
+                            Download Excel
                         </button>
-                        {showExportMenu && (
-                            <div className="dropdown-content" style={{
-                                position: 'absolute', right: 0, top: '100%', marginTop: '4px',
-                                backgroundColor: 'white', border: '1px solid #ccc', boxShadow: '0 8px 16px rgba(0,0,0,0.2)',
-                                zIndex: 10, minWidth: '220px', padding: '8px', borderRadius: '4px',
-                                display: 'flex', flexDirection: 'column', gap: '4px'
-                            }}>
-                                <strong style={{fontSize: '0.8rem', padding: '4px', color: '#666', borderBottom: '1px solid #eee'}}>PDF EXPORTS</strong>
-                                <button onClick={() => handleDownload('pdf', 'semester')} className="btn btn-secondary" style={{width: '100%', textAlign: 'left', justifyContent: 'flex-start', padding: '6px 8px'}}>Single Class</button>
-                                <button onClick={() => handleDownload('pdf', 'department')} className="btn btn-secondary" style={{width: '100%', textAlign: 'left', justifyContent: 'flex-start', padding: '6px 8px'}}>Selected Department</button>
-                                <button onClick={() => handleDownload('pdf', 'all')} className="btn btn-secondary" style={{width: '100%', textAlign: 'left', justifyContent: 'flex-start', padding: '6px 8px'}}>All Classes</button>
-                                
-                                <strong style={{fontSize: '0.8rem', padding: '4px', color: '#666', borderBottom: '1px solid #eee', marginTop: '8px'}}>EXCEL EXPORTS</strong>
-                                <button onClick={() => handleDownload('excel', 'semester')} className="btn btn-secondary" style={{width: '100%', textAlign: 'left', justifyContent: 'flex-start', padding: '6px 8px'}}>Single Class</button>
-                                <button onClick={() => handleDownload('excel', 'department')} className="btn btn-secondary" style={{width: '100%', textAlign: 'left', justifyContent: 'flex-start', padding: '6px 8px'}}>Selected Department</button>
-                                <button onClick={() => handleDownload('excel', 'all')} className="btn btn-secondary" style={{width: '100%', textAlign: 'left', justifyContent: 'flex-start', padding: '6px 8px'}}>All Classes</button>
-                            </div>
-                        )}
+                        <div style={{width: '1px', height: '24px', backgroundColor: '#ccc', margin: '0 4px'}}></div>
+                        <button
+                            className="btn btn-primary"
+                            onClick={() => handleDownload('pdf', 'all')}
+                            disabled={!exportStatus.has_timetable}
+                        >
+                            <FileText size={16} />
+                            Download All (PDF)
+                        </button>
+                        <button
+                            className="btn btn-primary"
+                            onClick={() => handleDownload('excel', 'all')}
+                            disabled={!exportStatus.has_timetable}
+                            style={{backgroundColor: '#2e7d32', color: 'white', borderColor: '#1b5e20'}}
+                        >
+                            <Download size={16} />
+                            Download All (Excel)
+                        </button>
                     </div>
                 </div>
-            </div>
 
             {/* Controls */}
             <div className="timetable-controls card">

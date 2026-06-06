@@ -3,141 +3,87 @@ PDF Generation Service for Official College Timetable Export.
 READ-ONLY service - does not modify any timetable data.
 
 Generates PDF that EXACTLY matches the K.Ramakrishnan College timetable format.
-Uses Times-Roman font for formal, classic appearance.
+Uses Times-Roman font for formal, classic appearance as requested.
+ODD SEMESTER FORMAT.
 """
 from io import BytesIO
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Tuple
 from datetime import datetime
-
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch, cm, mm
-from reportlab.platypus import (
-    SimpleDocTemplate, Table, TableStyle, Paragraph, 
-    Spacer, PageBreak, KeepTogether
-)
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+import json
 
 from sqlalchemy.orm import Session, joinedload
-from app.db.models import Allocation, Semester, Teacher, Subject
-from app.core.config import get_settings
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import landscape, A4
+from reportlab.lib.units import cm
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
-settings = get_settings()
+from app.db.models import Semester, Allocation, Subject, ComponentType, Teacher
 
-# ============================================================================
-# CONFIGURATION - Matching KR College Format
-# ============================================================================
-ACADEMIC_YEAR = "2025-26"
-SEMESTER_TYPE = "EVEN SEMESTER"
+# Fixed Configuration matching ODD SEM Template
+FONT_REGULAR = "Times-Roman"
+FONT_BOLD = "Times-Bold"
 COLLEGE_NAME = "K.RAMAKRISHNAN COLLEGE OF TECHNOLOGY(Autonomous)"
-DEPARTMENT_NAME = "DEPARTMENT OF ARTIFICIAL INTELLIGENCE & MACHINE LEARNING"
-
-# Font settings - Classic Times Roman for formal look
-FONT_REGULAR = 'Times-Roman'
-FONT_BOLD = 'Times-Bold'
-FONT_ITALIC = 'Times-Italic'
-
-# Colors matching the reference image
-COLORS = {
-    "header_blue": colors.Color(0.68, 0.85, 0.9),  # Light blue header
-    "yellow": colors.Color(1.0, 1.0, 0.6),  # Yellow for theory
-    "orange": colors.Color(1.0, 0.8, 0.4),  # Orange
-    "red": colors.Color(0.95, 0.5, 0.5),  # Red for labs
-    "grey": colors.Color(0.85, 0.85, 0.85),  # Grey for breaks
-    "white": colors.white,
-    "black": colors.black,
-    "border": colors.black,
-}
-
 DAY_NAMES = ["MON", "TUE", "WED", "THU", "FRI"]
 
+COLORS = {
+    "black": colors.HexColor("#000000"),
+    "white": colors.HexColor("#FFFFFF"),
+    "header_blue": colors.HexColor("#D9E1F2"),
+    "header_peach": colors.HexColor("#FCE4D6"),
+    "grey": colors.HexColor("#EAEAEA"),
+}
 
 class TimetablePDFService:
-    """Service for generating official KR College timetable PDFs."""
-    
     def __init__(self, db: Session):
         self.db = db
         self.styles = getSampleStyleSheet()
-    
-    def _get_all_semesters(self) -> List[Semester]:
-        """Get all semesters that have allocations."""
-        semester_ids = self.db.query(Allocation.semester_id).distinct().all()
-        semester_ids = [s[0] for s in semester_ids]
-        
-        if not semester_ids:
-            return []
-        
-        return self.db.query(Semester).filter(
-            Semester.id.in_(semester_ids)
-        ).order_by(Semester.year, Semester.code).all()
-    
-    def _get_semester_allocations(self, semester_id: int) -> tuple:
-        """Get all allocations for a semester organized by day and slot.
-        
-        Returns grid[day][slot] = [alloc, ...] (list to support multi-faculty labs).
-        """
-        allocations = self.db.query(Allocation).options(
-            joinedload(Allocation.teacher),
-            joinedload(Allocation.subject),
-            joinedload(Allocation.room)
-        ).filter(
-            Allocation.semester_id == semester_id
-        ).all()
-        
-        # Organize into a grid — each slot holds a LIST of allocations
-        # to support multi-faculty parallel labs (multiple teachers per slot)
-        grid = {}
-        for day in range(5):
-            grid[day] = {}
-            for slot in range(settings.SLOTS_PER_DAY):
-                grid[day][slot] = []
-        
-        for alloc in allocations:
-            grid[alloc.day][alloc.slot].append(alloc)
-        
-        return grid, allocations
-    
+
     def _get_subject_mnemonic(self, subject: Subject) -> str:
-        """Generate a mnemonic from subject name."""
-        name = subject.name
-        words = name.split()
-        if len(words) == 1:
-            return name[:4].upper()
-        # Take first letter of each significant word
-        mnemonic = ''.join(w[0].upper() for w in words if len(w) > 2)[:4]
-        return mnemonic if mnemonic else name[:3].upper()
-    
-    def _get_component_suffix(self, alloc) -> str:
-        """Get component type suffix for display."""
-        comp = getattr(alloc, "academic_component", None) or (
-            alloc.component_type.value if getattr(alloc, "component_type", None) else "theory"
-        )
+        if not subject:
+            return ""
+        acronym = getattr(subject, 'acronym', None)
+        if acronym and acronym.strip():
+            return acronym.strip()
+        words = subject.name.replace('&', ' ').replace('-', ' ').split()
+        return "".join(word[0].upper() for word in words if word).strip()
 
-        if comp == "lab":
-            return "(P)"
-        if comp == "tutorial":
-            return "(T)"
-        if comp == "project":
-            return "(PRJ)"
-        if comp == "report":
-            return "(RPT)"
-        if comp == "self_study":
-            return "(SS)"
-        if comp == "seminar":
-            return "(SEM)"
+    def _get_component_suffix(self, alloc: Allocation) -> str:
+        if alloc.component_type:
+            val = alloc.component_type.value
+            if val == "theory": return "(L)"
+            if val == "tutorial": return "(T)"
+            if val == "lab": return " LAB"
+        return ""
 
-        return "(L)"
-    
-    def _build_header_section(self, semester: Semester) -> Table:
-        """Build the header section matching the reference format."""
-        dept_name = "DEPARTMENT OF ARTIFICIAL INTELLIGENCE & MACHINE LEARNING"
-        if semester.department:
-            dept_name = "DEPARTMENT OF " + semester.department.name.upper()
+    def _get_all_semesters(self) -> List[Semester]:
+        return self.db.query(Semester).options(
+            joinedload(Semester.department)
+        ).order_by(Semester.year, Semester.code).all()
 
+    def _get_semester_allocations(self, semester_id: int) -> Tuple[Dict, List[Allocation]]:
+        allocations = self.db.query(Allocation).options(
+            joinedload(Allocation.subject),
+            joinedload(Allocation.teacher),
+            joinedload(Allocation.room)
+        ).filter(Allocation.semester_id == semester_id).all()
+        
+        grid = {}
+        for alloc in allocations:
+            day = alloc.day
+            slot = alloc.slot
+            if day not in grid: grid[day] = {}
+            if slot not in grid[day]: grid[day][slot] = []
+            grid[day][slot].append(alloc)
+            
+        return grid, allocations
+
+    def _build_header_section(self, semester: Semester, allocations: List[Allocation]) -> Table:
+        dept_name = f"DEPARTMENT OF {semester.department.name.upper()}" if semester.department else "DEPARTMENT OF ARTIFICIAL INTELLIGENCE & MACHINE LEARNING"
+        
         current_year = datetime.now().year
-        academic_year_str = f"{current_year}-{str(current_year+1)[-2:]}"
-        semester_type_str = "EVEN SEMESTER" if semester.semester_number % 2 == 0 else "ODD SEMESTER"
+        academic_year_str = f"{current_year} - {str(current_year+1)[-2:]}"
         
         def to_roman(num):
             val = [10, 9, 5, 4, 1]
@@ -152,416 +98,286 @@ class TimetablePDFService:
             return roman_num
         
         roman_sem = to_roman(semester.semester_number)
-        title = f"CLASS TIME TABLE - {roman_sem} SEMESTER - ACADEMIC YEAR {academic_year_str} ({semester_type_str})"
+        title = f"CLASS TIME TABLE - {roman_sem} SEMESTER - ACADEMIC YEAR {academic_year_str} (ODD SEMESTER)"
 
-        # Top section with college info and format number
-        header_data = [
-            # Row 1: Format info on right
-            ["***", COLLEGE_NAME, "Format No:CPS-01"],
-            # Row 2: Revision info  
-            ["REVISION", dept_name, "Issue No: 01"],
-            # Row 3: Date and title
-            ["DATE", title, f"Date: {datetime.now().strftime('%d.%m.%y')}"],
-        ]
-        
-        col_widths = [2.2*cm, 21*cm, 4.5*cm]
-        header_table = Table(header_data, colWidths=col_widths)
-        header_table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), FONT_REGULAR),
-            ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('FONTSIZE', (1, 0), (1, 0), 14),  # College name larger
-            ('FONTSIZE', (1, 1), (1, 1), 11),   # Dept name
-            ('FONTSIZE', (1, 2), (1, 2), 12),  # Title
-            ('FONTNAME', (1, 0), (1, 2), FONT_BOLD),
-            ('ALIGN', (0, 0), (0, -1), 'LEFT'),
-            ('ALIGN', (1, 0), (1, -1), 'CENTER'),
-            ('ALIGN', (2, 0), (2, -1), 'RIGHT'),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('TOPPADDING', (0, 0), (-1, -1), 3),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-        ]))
-        
-        return header_table
-    
-    def _build_info_row(self, semester: Semester, allocations: List) -> Table:
-        """Build the info row with HOD, Class Advisor, etc."""
         room_counts = {}
         for alloc in allocations:
-            if alloc.room and alloc.component_type.value == "theory":
+            if alloc.room and alloc.component_type and alloc.component_type.value == "theory":
                 room_counts[alloc.room.name] = room_counts.get(alloc.room.name, 0) + 1
         
-        primary_room = "***"
+        primary_room = "LHC201"
         if room_counts:
             primary_room = max(room_counts.items(), key=lambda x: x[1])[0]
 
         section = semester.section or "A"
-        strength = str(semester.student_count) if semester.student_count else "60"
+        strength = str(semester.student_count) if semester.student_count else "59"
 
-        info_data = [
-            ["HOD", "***", "SECTION", section, "CHAIR PERSON", "***", "ROOM NO.", primary_room],
-            ["CLASS ADVISOR", "***", "STRENGTH", strength, "ASST.CLASS ADVISOR", "***", "CLASS REP", "***"],
+        header_data = [
+            ["REVISION NO.", "***", COLLEGE_NAME, "", "", "", "Format No:UFP1-01\nIssue No: 01\nDate: 01.07.11", ""],
+            ["REVISION DATE", "***", dept_name, "", "", "", "", ""],
+            ["", "", title, "", "", "", "", ""],
+            ["HOD", "Dr.T.Avudaiappan", "SECTION", section, "CHAIR PERSON", "Mrs. Joany Franklin", "ROOM NO.", primary_room],
+            ["CLASS ADVISOR", "Mrs.M.Bharathi", "STRENGTH", strength, "ASST.CLASS ADVISOR", "***", "CLASS REP", "***"],
         ]
         
-        col_widths = [2.8*cm, 4.5*cm, 2.2*cm, 1.5*cm, 4*cm, 5*cm, 2.2*cm, 2.2*cm]
-        info_table = Table(info_data, colWidths=col_widths)
-        info_table.setStyle(TableStyle([
-            ('FONTNAME', (0, 0), (-1, -1), FONT_REGULAR),
+        col_widths = [3.2*cm, 2.0*cm, 4.0*cm, 2.0*cm, 4.0*cm, 6.0*cm, 3.0*cm, 3.5*cm]
+        table = Table(header_data, colWidths=col_widths)
+        
+        style = TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), FONT_BOLD),
             ('FONTSIZE', (0, 0), (-1, -1), 9),
-            ('FONTNAME', (0, 0), (0, -1), FONT_BOLD),
-            ('FONTNAME', (2, 0), (2, -1), FONT_BOLD),
-            ('FONTNAME', (4, 0), (4, -1), FONT_BOLD),
-            ('FONTNAME', (6, 0), (6, -1), FONT_BOLD),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('GRID', (0, 0), (-1, -1), 0.75, COLORS["black"]),
-            ('BACKGROUND', (0, 0), (-1, -1), COLORS["header_blue"]),
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-        ]))
-        
-        return info_table
-    
-    def _build_timetable_grid(self, semester: Semester, grid: Dict) -> Table:
-        """Build the main timetable grid matching the reference format."""
-        # Period timings - slightly larger text
-        timings = [
-            "8:45 a.m. -\n9:45 a.m.",
-            "9:45 a.m. -\n10:45 a.m.",
-            "10:45 a.m.-\n11:00 a.m.",  # Break
-            "11:00 a.m.-\n12:00 p.m.",
-            "12:00 p.m.-\n01:00 p.m.",  # Lunch
-            "01:00 p.m.-\n02:00 p.m.",
-            "02:00 p.m.-\n02:50 p.m.",
-            "02:50 p.m.-\n03:05 p.m.",  # Break
-            "03:05 p.m.-\n03:55p.m.",
-            "03:55 p.m.-\n04:45p.m.",
-        ]
-        
-        # Header rows
-        header_row1 = ["DAYS", "1", "2", "BREAK", "3", "LUNCH", "4", "5", "BREAK", "6", "7"]
-        header_row2 = ["TIMINGS"] + timings
-        
-        # Build data rows
-        data = [header_row1, header_row2]
-        
-        # Map slots to columns (accounting for break/lunch columns)
-        slot_to_col = {0: 1, 1: 2, 2: 4, 3: 6, 4: 7, 5: 9, 6: 10}
-        
-        for day_idx, day_name in enumerate(DAY_NAMES):
-            row = [day_name]
             
-            for col_idx in range(1, 11):
-                if col_idx == 3:  # Break
-                    row.append("BREAK")
-                elif col_idx == 5:  # Lunch
-                    row.append("LUNCH")
-                elif col_idx == 8:  # Break
-                    row.append("BREAK")
-                else:
-                    # Find slot for this column
-                    slot_idx = None
-                    for s, c in slot_to_col.items():
-                        if c == col_idx:
-                            slot_idx = s
-                            break
-                    
-                    if slot_idx is not None:
-                        slot_allocs = grid.get(day_idx, {}).get(slot_idx, [])
-                        if slot_allocs:
-                            primary = slot_allocs[0]
-                            mnemonic = self._get_subject_mnemonic(primary.subject)
-                            suffix = self._get_component_suffix(primary)
-                            
-                            # Multi-faculty lab: show batch/teacher details
-                            if len(slot_allocs) > 1 and any(getattr(a, 'batch_id', None) for a in slot_allocs):
-                                batch_parts = []
-                                for a in slot_allocs:
-                                    batch_label = f"B{a.batch_id}" if a.batch_id else "All"
-                                    teacher_short = a.teacher.name.split()[-1] if a.teacher else "?"
-                                    batch_parts.append(f"{batch_label}:{teacher_short}")
-                                cell_text = f"{mnemonic}{suffix}\n{' / '.join(batch_parts)}"
-                            else:
-                                cell_text = f"{mnemonic}{suffix}"
-                        else:
-                            cell_text = ""
-                    else:
-                        cell_text = ""
-                    row.append(cell_text)
+            # Format No merged across row 1, 2, 3
+            ('SPAN', (6, 0), (7, 2)), 
+            # Revision date merged rows 2 and 3
+            ('SPAN', (0, 1), (0, 2)),
+            ('SPAN', (1, 1), (1, 2)),
             
-            data.append(row)
-        
-        # LARGER Column widths for better readability
-        col_widths = [2.0*cm, 2.5*cm, 2.5*cm, 1.6*cm, 2.5*cm, 2.0*cm, 2.5*cm, 2.5*cm, 1.6*cm, 2.5*cm, 2.5*cm]
-        row_heights = [0.9*cm, 1.1*cm] + [1.1*cm] * 5  # Taller rows
-        
-        table = Table(data, colWidths=col_widths, rowHeights=row_heights)
-        
-        # Build style commands with Times-Roman font
-        style_commands = [
-            # Headers - LARGER
-            ('FONTNAME', (0, 0), (-1, 1), FONT_BOLD),
-            ('FONTSIZE', (0, 0), (-1, 0), 11),  # Period numbers
-            ('FONTSIZE', (0, 1), (-1, 1), 7),   # Timings
-            ('BACKGROUND', (0, 0), (-1, 1), COLORS["header_blue"]),
+            ('SPAN', (2, 0), (5, 0)), 
+            ('SPAN', (2, 1), (5, 1)), 
+            ('SPAN', (2, 2), (5, 2)), 
             
-            # Days column - LARGER
-            ('FONTNAME', (0, 2), (0, -1), FONT_BOLD),
-            ('FONTSIZE', (0, 2), (0, -1), 11),
-            ('BACKGROUND', (0, 2), (0, -1), COLORS["header_blue"]),
-            
-            # Content - LARGER
-            ('FONTNAME', (1, 2), (-1, -1), FONT_BOLD),
-            ('FONTSIZE', (1, 2), (-1, -1), 10),
-            
-            # Alignment
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             
-            # Grid - slightly thicker
+            ('BACKGROUND', (0, 0), (1, 3), COLORS["header_blue"]),
+            ('BACKGROUND', (2, 0), (5, 0), COLORS["header_peach"]),
+            ('BACKGROUND', (2, 1), (5, 2), COLORS["header_blue"]),
+            ('BACKGROUND', (6, 0), (7, 3), COLORS["header_blue"]),
+            ('BACKGROUND', (2, 3), (5, 3), COLORS["header_blue"]),
+            
+            ('BACKGROUND', (0, 4), (-1, 4), COLORS["white"]),
             ('GRID', (0, 0), (-1, -1), 1, COLORS["black"]),
-            ('BOX', (0, 0), (-1, -1), 2, COLORS["black"]),
             
-            # Break columns background (columns 3, 5, 8)
-            ('BACKGROUND', (3, 0), (3, -1), COLORS["grey"]),
-            ('BACKGROUND', (5, 0), (5, -1), COLORS["grey"]),
-            ('BACKGROUND', (8, 0), (8, -1), COLORS["grey"]),
-        ]
+            ('ALIGN', (6, 0), (7, 2), 'LEFT'),
+            ('FONTSIZE', (6, 0), (7, 2), 7),
+        ])
         
-        # Apply cell colors based on content type
-        for day_idx in range(5):
-            row_idx = day_idx + 2  # +2 for header rows
-            for slot_idx, col_idx in slot_to_col.items():
-                slot_allocs = grid.get(day_idx, {}).get(slot_idx, [])
-                if slot_allocs:
-                    alloc = slot_allocs[0]  # Use primary for color
-                    if alloc.component_type and alloc.component_type.value == "lab":
-                        style_commands.append(
-                            ('BACKGROUND', (col_idx, row_idx), (col_idx, row_idx), COLORS["red"])
-                        )
-                    elif getattr(alloc, 'is_elective', False):
-                        style_commands.append(
-                            ('BACKGROUND', (col_idx, row_idx), (col_idx, row_idx), COLORS["orange"])
-                        )
-                    else:
-                        style_commands.append(
-                            ('BACKGROUND', (col_idx, row_idx), (col_idx, row_idx), COLORS["yellow"])
-                        )
-        
-        table.setStyle(TableStyle(style_commands))
+        table.setStyle(style)
         return table
-    
-    def _build_subject_table(self, semester: Semester, allocations: List) -> Table:
-        """Build the subject details table."""
-        # Header
-        header = [
-            "SUB CODE", "SUBJECT NAME", "MNEMONIC", 
-            "L-LECTURE,T-TUTORIAL,P-PRACTICAL,S-SELF STUDY",
-            "CREDIT", "STAFF NAME(M)", "DEPT", "TOTAL HOURS"
+
+    def _build_timetable_grid(self, semester: Semester, grid: Dict) -> Table:
+        timings = [
+            "8:45 a.m. -\n9:45 a.m.",
+            "9:45 a.m. -\n10:45 a.m.",
+            "10:45 a.m.-\n11:00 a.m.",
+            "11:00 a.m. -\n12:00 p.m.",
+            "12:00 p.m. -\n01:00 p.m.",
+            "01:00 p.m-\n02:00 p.m.",
+            "02:00 p.m. -\n03:00 p.m.",
+            "03:00 p.m-\n03:50 p.m.",
+            "03:50 p.m. -\n04:40 p.m."
         ]
         
-        # Collect unique subjects
-        subjects_seen: Set[int] = set()
-        rows = [header]
-        total_hours = 0
+        header_row1 = ["DAYS", "1", "2", "BREAK", "3", "4", "LUNCH", "5", "6", "7"]
+        header_row2 = ["TIMINGS", timings[0], timings[1], timings[2], timings[3], timings[4], timings[5], timings[6], timings[7], timings[8]]
         
-        for alloc in allocations:
-            if alloc.subject.id not in subjects_seen:
-                subjects_seen.add(alloc.subject.id)
-                subj = alloc.subject
-                mnemonic = self._get_subject_mnemonic(subj)
-                
-                # Calculate total hours (unique slots) for this subject in timetable
-                hours = len({(a.day, a.slot) for a in allocations if a.subject.id == subj.id})
-                total_hours += hours
-                
-                # Determine LTPS format
-                comp_type = ""
-                if alloc.component_type:
-                    if alloc.component_type.value == "lab":
-                        comp_type = "PE - II"
-                    elif alloc.component_type.value == "tutorial":
-                        comp_type = "T"
-                    else:
-                        comp_type = ""
-                
-                # Credit calculation - use correct attribute names
-                theory_hrs = getattr(subj, 'theory_hours_per_week', 3) or 3
-                lab_hrs = getattr(subj, 'lab_hours_per_week', 0) or 0
-                credit = theory_hrs + (lab_hrs // 2) if lab_hrs else theory_hrs
-                
-                # Get unique teachers for this subject
-                teachers = {a.teacher.name for a in allocations if a.subject.id == subj.id and a.teacher}
-                teacher_names = ", ".join(teachers) if teachers else "***"
-                
-                rows.append([
-                    subj.code,
-                    subj.name[:40],
-                    mnemonic,
-                    comp_type,
-                    str(credit) if credit else "3",
-                    teacher_names,
-                    semester.department.code if semester.department else "AI",
-                    str(hours)
-                ])
+        data = [header_row1, header_row2]
+        slot_to_col = {0: 1, 1: 2, 2: 4, 3: 5, 4: 7, 5: 8, 6: 9}
         
-        # Add total row
-        rows.append(["", "", "", "", "", "", "TOTAL HOURS", str(total_hours)])
-        
-        # Create table - LARGER columns
-        col_widths = [2*cm, 6.5*cm, 2.2*cm, 4.5*cm, 1.5*cm, 5.5*cm, 1.5*cm, 2.2*cm]
-        table = Table(rows, colWidths=col_widths)
-        
-        table.setStyle(TableStyle([
-            # Header
-            ('FONTNAME', (0, 0), (-1, 0), FONT_BOLD),
-            ('FONTSIZE', (0, 0), (-1, 0), 9),
-            ('BACKGROUND', (0, 0), (-1, 0), COLORS["header_blue"]),
+        for day_idx, day_name in enumerate(DAY_NAMES):
+            row = [day_name, "", "", "", "", "", "", "", "", ""]
+            data.append(row)
             
-            # Content - Times Roman
-            ('FONTNAME', (0, 1), (-1, -1), FONT_REGULAR),
-            ('FONTSIZE', (0, 1), (-1, -1), 9),
-            
-            # Alignment
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('ALIGN', (4, 0), (4, -1), 'CENTER'),
-            ('ALIGN', (7, 0), (7, -1), 'CENTER'),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            
-            # Grid
-            ('GRID', (0, 0), (-1, -1), 0.75, COLORS["black"]),
-            ('BOX', (0, 0), (-1, -1), 1, COLORS["black"]),
-            
-            # Padding
-            ('TOPPADDING', (0, 0), (-1, -1), 4),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-            ('LEFTPADDING', (0, 0), (-1, -1), 4),
-            
-            # Total row
-            ('FONTNAME', (0, -1), (-1, -1), FONT_BOLD),
-        ]))
+        col_widths = [3.2*cm, 3.0*cm, 3.0*cm, 2.0*cm, 3.0*cm, 3.0*cm, 2.0*cm, 2.8*cm, 2.8*cm, 2.9*cm]
+        row_heights = [0.6*cm, 1.0*cm] + [1.0*cm] * 5
         
-        return table
-    
-    def _build_signature_section(self) -> Table:
-        """Build the signature footer section."""
-        sig_data = [
-            ["Dept.T.T. Coordinator", "", "HoD-AI", "", "CoT", "", "HAA", ""]
-        ]
-        
-        col_widths = [4*cm, 3.5*cm, 2.5*cm, 3.5*cm, 2*cm, 3.5*cm, 2*cm, 3.5*cm]
-        table = Table(sig_data, colWidths=col_widths)
-        
-        table.setStyle(TableStyle([
+        style_commands = [
             ('FONTNAME', (0, 0), (-1, -1), FONT_BOLD),
             ('FONTSIZE', (0, 0), (-1, -1), 10),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('TOPPADDING', (0, 0), (-1, -1), 25),
-        ]))
+            ('FONTSIZE', (0, 1), (-1, 1), 8), 
+            
+            ('BACKGROUND', (0, 0), (-1, 1), COLORS["grey"]), 
+            ('BACKGROUND', (0, 2), (0, -1), COLORS["grey"]), 
+            
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('GRID', (0, 0), (-1, -1), 1, COLORS["black"]),
+            
+            ('SPAN', (3, 2), (3, 6)),
+            ('SPAN', (6, 2), (6, 6)),
+            ('BACKGROUND', (3, 2), (3, 6), COLORS["grey"]),
+            ('BACKGROUND', (6, 2), (6, 6), COLORS["grey"]),
+        ]
         
+        data[2][3] = "B\nR\nE\nA\nK"
+        data[2][6] = "L\nU\nN\nC\nH"
+
+        for day_idx in range(5):
+            row_idx = day_idx + 2
+            skip_cols = set()
+            for slot_idx in range(7):
+                col_idx = slot_to_col[slot_idx]
+                if col_idx in skip_cols:
+                    continue
+                    
+                slot_allocs = grid.get(day_idx, {}).get(slot_idx, [])
+                if not slot_allocs:
+                    continue
+                    
+                alloc = slot_allocs[0]
+                is_lab = any(a.component_type and a.component_type.value == "lab" for a in slot_allocs)
+                
+                if getattr(alloc, 'academic_component', None) == 'mentor_period':
+                    data[row_idx][col_idx] = "MENTOR PERIOD"
+                else:
+                    if is_lab:
+                        texts = []
+                        for a in slot_allocs:
+                            suffix = self._get_component_suffix(a)
+                            # Template explicitly has "DAA LAB", "MLT LAB", etc without "(L)"
+                            texts.append(f"{self._get_subject_mnemonic(a.subject)}{suffix}")
+                        cell_text = " / ".join(list(set(texts)))
+                        data[row_idx][col_idx] = cell_text
+                        
+                        if slot_idx < 6:
+                            next_allocs = grid.get(day_idx, {}).get(slot_idx+1, [])
+                            if next_allocs and any(a.component_type and a.component_type.value == "lab" for a in next_allocs):
+                                next_col = slot_to_col[slot_idx+1]
+                                style_commands.append(('SPAN', (col_idx, row_idx), (next_col, row_idx)))
+                                skip_cols.add(next_col)
+                    else:
+                        mnemonic = self._get_subject_mnemonic(alloc.subject)
+                        suffix = self._get_component_suffix(alloc)
+                        data[row_idx][col_idx] = f"{mnemonic}{suffix}"
+                        
+        table = Table(data, colWidths=col_widths, rowHeights=row_heights)
+        table.setStyle(TableStyle(style_commands))
         return table
-    
+
+    def _build_subject_table(self, semester: Semester, allocations: List[Allocation]) -> Table:
+        header = ["SUB CODE", "SUBJECT NAME", "MNEMONIC", "CREDIT", "STAFF NAME(M)", "DEPT", "TOTAL HOURS"]
+        data = [
+            ["L-LECTURE,T-TUTORIAL,P-PRACTICAL,S-SELF STUDY", "", "", "", "", "", ""],
+            header
+        ]
+        
+        subject_data = {}
+        for alloc in allocations:
+            if not alloc.subject: continue
+            
+            key = (alloc.subject.id, alloc.component_type.value if alloc.component_type else "theory")
+            if key not in subject_data:
+                subject_data[key] = {
+                    "subject": alloc.subject,
+                    "teachers": set(),
+                    "component": alloc.component_type,
+                    "slots": set()
+                }
+            if alloc.teacher:
+                subject_data[key]["teachers"].add(alloc.teacher.name)
+            subject_data[key]["slots"].add((alloc.day, alloc.slot))
+
+        total_hours = 0
+        for data_row in subject_data.values():
+            subj = data_row["subject"]
+            tname = "\n".join(sorted(data_row["teachers"])) if data_row["teachers"] else "***"
+            hours = len(data_row["slots"])
+            total_hours += hours
+            
+            credit = getattr(subj, 'theory_hours_per_week', 3) or 3
+            if getattr(subj, 'lab_hours_per_week', 0):
+                credit += getattr(subj, 'lab_hours_per_week', 0) // 2
+                
+            mnemonic = f"{self._get_subject_mnemonic(subj)}"
+            dept = semester.department.code if semester.department else "AI"
+            
+            row = [
+                subj.code,
+                Paragraph(subj.name, ParagraphStyle('Normal', fontName=FONT_REGULAR, fontSize=9)),
+                mnemonic,
+                str(credit),
+                Paragraph(tname, ParagraphStyle('Normal', fontName=FONT_REGULAR, fontSize=9)),
+                dept,
+                str(hours)
+            ]
+            data.append(row)
+            
+        data.append(["", "", "", "", "", "TOTAL HOURS", str(total_hours)])
+        
+        col_widths = [2.5*cm, 7.7*cm, 2.5*cm, 2.0*cm, 6.0*cm, 2.0*cm, 5.0*cm]
+        table = Table(data, colWidths=col_widths)
+        
+        style = TableStyle([
+            ('FONTNAME', (0, 0), (-1, -1), FONT_REGULAR),
+            ('FONTNAME', (0, 0), (-1, 1), FONT_BOLD),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            
+            ('SPAN', (0, 0), (-1, 0)),
+            
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (1, 2), (1, -2), 'LEFT'), 
+            ('ALIGN', (4, 2), (4, -2), 'LEFT'), 
+            
+            ('BACKGROUND', (0, 0), (-1, 1), COLORS["grey"]),
+            
+            ('GRID', (0, 0), (-1, -1), 1, COLORS["black"]),
+            
+            ('SPAN', (0, -1), (4, -1)),
+            ('ALIGN', (5, -1), (5, -1), 'RIGHT'),
+            ('FONTNAME', (5, -1), (-1, -1), FONT_BOLD),
+        ])
+        table.setStyle(style)
+        return table
+
     def _build_semester_page(self, semester: Semester) -> List:
-        """Build complete PDF page for a semester."""
         elements = []
         grid, allocations = self._get_semester_allocations(semester.id)
         
-        # Header section
-        elements.append(self._build_header_section(semester))
-        elements.append(Spacer(1, 3*mm))
-        
-        # Info row
-        elements.append(self._build_info_row(semester, allocations))
-        elements.append(Spacer(1, 4*mm))
-        
-        # Timetable grid
+        elements.append(self._build_header_section(semester, allocations))
         elements.append(self._build_timetable_grid(semester, grid))
-        elements.append(Spacer(1, 6*mm))
-        
-        # Subject table
         elements.append(self._build_subject_table(semester, allocations))
-        elements.append(Spacer(1, 10*mm))
-        
-        # Signature section
-        elements.append(self._build_signature_section())
         
         return elements
-    
-    def generate_semester_pdf(self, semester: Semester, allocations: List = None, scb_map=None) -> bytes:
-        """Generate PDF for a single semester."""
+
+    def generate_semester_pdf(self, semester: Semester) -> bytes:
         buffer = BytesIO()
         doc = SimpleDocTemplate(
             buffer,
             pagesize=landscape(A4),
             rightMargin=0.6*cm,
             leftMargin=0.6*cm,
-            topMargin=0.4*cm,
-            bottomMargin=0.4*cm
+            topMargin=0.6*cm,
+            bottomMargin=0.6*cm
         )
         elements = self._build_semester_page(semester)
         doc.build(elements)
         return buffer.getvalue()
 
-    def generate_all_timetables_pdf(self) -> bytes:
-        """
-        Generate PDF containing all class timetables in official KR College format.
-        READ-ONLY operation - uses existing allocation data only.
-        
-        Returns:
-            bytes: PDF file content
-        """
+    def generate_all_timetables_pdf_zip(self) -> bytes:
+        import zipfile
         buffer = BytesIO()
+        semesters = self._get_all_semesters()
         
-        # Create document in landscape orientation with narrow margins
+        with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for sem in semesters:
+                pdf_bytes = self.generate_semester_pdf(sem)
+                safe_code = "".join(c for c in sem.code if c.isalnum() or c in (' ', '-', '_'))
+                zipf.writestr(f"timetable_{safe_code}.pdf", pdf_bytes)
+                
+        return buffer.getvalue()
+
+    def generate_all_timetables_pdf(self) -> bytes:
+        buffer = BytesIO()
         doc = SimpleDocTemplate(
             buffer,
             pagesize=landscape(A4),
             rightMargin=0.6*cm,
             leftMargin=0.6*cm,
-            topMargin=0.4*cm,
-            bottomMargin=0.4*cm
+            topMargin=0.6*cm,
+            bottomMargin=0.6*cm
         )
-        
         elements = []
-        
-        # Get all semesters with allocations
-        semesters = self._get_all_semesters()
+        semesters = [s for s in self._get_all_semesters() if self._get_semester_allocations(s.id)[1]]
         
         if not semesters:
-            # No timetables generated yet
-            elements.append(Spacer(1, 5*cm))
-            elements.append(Paragraph(
-                "No Timetable Generated",
-                ParagraphStyle(
-                    name='EmptyTitle',
-                    fontName=FONT_BOLD,
-                    fontSize=18,
-                    alignment=TA_CENTER
-                )
-            ))
-            elements.append(Spacer(1, 1*cm))
-            elements.append(Paragraph(
-                "Please generate a timetable first before exporting to PDF.",
-                ParagraphStyle(
-                    name='EmptySubtitle',
-                    fontName=FONT_REGULAR,
-                    fontSize=12,
-                    alignment=TA_CENTER,
-                    textColor=colors.gray
-                )
-            ))
+            elements.append(Paragraph("No Timetable Generated", ParagraphStyle('Empty', fontName=FONT_BOLD, fontSize=18, alignment=TA_CENTER)))
         else:
-            # Add each semester timetable on a new page
             for i, semester in enumerate(semesters):
                 elements.extend(self._build_semester_page(semester))
                 if i < len(semesters) - 1:
                     elements.append(PageBreak())
-        
-        # Build PDF
+                    
         doc.build(elements)
-        
         return buffer.getvalue()
-    
-    def get_timetable_count(self) -> int:
-        """Get count of semesters with generated timetables."""
-        return self.db.query(Allocation.semester_id).distinct().count()

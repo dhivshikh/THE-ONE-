@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload, subqueryload, cont
 from app.db.models import (
     Teacher, Subject, Semester, Room, Allocation, FixedSlot,
     RoomType, SubjectType, ComponentType, ClassSubjectTeacher,
-    ElectiveBasket, teacher_subjects
+    ElectiveBasket, teacher_subjects, MentorPeriod
 )
 
 # ============================================================
@@ -144,6 +144,9 @@ class TimetableState:
     # Set of integers representing blocked slot indices (0-6)
     global_blocked_slots: Set[int] = field(default_factory=set)
     
+    # NEW: Blocked specific (day, slot) pairs across all entities (e.g. Mentor Period)
+    global_blocked_day_slots: Set[Tuple[int, int]] = field(default_factory=set)
+    
     # CONSECUTIVE THEORY CHECK: Indexed lookup for fast adjacency queries
     # (semester_id, day, slot) -> Set[(subject_id, component_type_value)]
     semester_slot_subjects: Dict[Tuple[int, int, int], Set[Tuple[int, str]]] = field(default_factory=dict)
@@ -151,6 +154,8 @@ class TimetableState:
     def is_slot_fixed(self, semester_id: int, day: int, slot: int) -> bool:
         """Check if a slot is fixed/locked and cannot be modified."""
         if slot in self.global_blocked_slots:
+            return True
+        if (day, slot) in self.global_blocked_day_slots:
             return True
         return (semester_id, day, slot) in self.fixed_slots
     
@@ -299,6 +304,8 @@ class TimetableState:
     def is_teacher_free(self, teacher_id: int, day: int, slot: int) -> bool:
         """Check if teacher is free (in-memory check)."""
         if slot in self.global_blocked_slots:
+            return False
+        if (day, slot) in self.global_blocked_day_slots:
             return False
         if teacher_id not in self.teacher_slots:
             return True
@@ -482,12 +489,16 @@ class TimetableState:
     def is_room_free(self, room_id: int, day: int, slot: int) -> bool:
         if slot in self.global_blocked_slots:
             return False
+        if (day, slot) in self.global_blocked_day_slots:
+            return False
         if room_id not in self.room_slots:
             return True
         return (day, slot) not in self.room_slots[room_id]
     
     def is_semester_free(self, semester_id: int, day: int, slot: int) -> bool:
         if slot in self.global_blocked_slots:
+            return False
+        if (day, slot) in self.global_blocked_day_slots:
             return False
         if semester_id not in self.semester_slots:
             return True
@@ -710,7 +721,6 @@ class TimetableGenerator:
             print("   [CLEANUP] Clearing all existing allocations for these semesters...")
             self._clear_allocations_only(target_semesters)
         
-
         # INITIALIZE CUMULATIVE STATE
         # This state object will persist through all department batches, ensuring 
         # that Dept 2 sees the teachers/rooms already taken by Dept 1.
@@ -721,6 +731,14 @@ class TimetableGenerator:
             
         # Load external constraints (from semesters NOT in target_semesters)
         self._load_existing_allocations(cumulative_state, exclude_semesters=target_semesters)
+
+        print("\nPHASE 0.2: GLOBAL MENTOR PERIOD RULE")
+        default_classroom_map = self._read_default_classroom_map(all_rooms, target_semesters)
+        mentor_allocs = self._pre_schedule_mentor_period(target_semesters, cumulative_state, default_classroom_map)
+        if mentor_allocs:
+            for ma in mentor_allocs:
+                all_allocations.append(ma)
+            print(f"   [GLOBAL] Locked Mentor Period at Day {mentor_allocs[0].day} Slot {mentor_allocs[0].slot} for {len(mentor_allocs)} classes")
 
         print("\nPHASE 0.5: PRE-SCHEDULING STRUCTURED COMPOSITE BASKETS")
         scb_allocations = self._pre_schedule_scbs(
@@ -1256,6 +1274,111 @@ class TimetableGenerator:
                         global_teacher_locks.setdefault(tid, set()).add((d, s))
             
         return global_theory_plan, global_lab_plan, global_teacher_locks
+
+    def _pre_schedule_mentor_period(
+        self,
+        target_semesters: List[Semester],
+        state: TimetableState,
+        default_classroom_map: Dict[int, int]
+    ) -> List[AllocationEntry]:
+        """
+        Global Mentor Period pre-scheduling.
+        Finds a common slot and blocks it for all classes and teachers.
+        """
+        setting = self.db.query(MentorPeriod).first()
+        if not setting or not setting.is_enabled:
+            return []
+
+        # Parse target criteria
+        target_dept_ids = [int(x) for x in setting.departments.split(',')] if setting.departments else []
+        target_years = [int(x) for x in setting.years.split(',')] if setting.years else []
+        target_class_ids = [int(x) for x in setting.classes.split(',')] if setting.classes else []
+
+        # Filter semesters
+        matched_semesters = []
+        for sem in target_semesters:
+            sem_year = getattr(sem, 'year', None) or ((sem.semester_number + 1) // 2)
+            if target_dept_ids and getattr(sem, 'dept_id', None) not in target_dept_ids:
+                continue
+            if target_years and sem_year not in target_years:
+                continue
+            if target_class_ids and sem.id not in target_class_ids:
+                continue
+            matched_semesters.append(sem)
+
+        if not matched_semesters:
+            return []
+
+        # Find common slot
+        best_day = None
+        best_slot = None
+        
+        # If already globally scheduled, prioritize that slot
+        if setting.is_scheduled and setting.scheduled_day is not None and setting.scheduled_slot is not None:
+            best_day = setting.scheduled_day
+            best_slot = setting.scheduled_slot
+            # Optionally verify if it's free, but realistically we MUST lock it.
+            # We'll just verify and log if it's already occupied by a hard constraint.
+            for sem in matched_semesters:
+                if state.is_slot_fixed(sem.id, best_day, best_slot):
+                    self.allocation_failures.append(f"[MENTOR PERIOD] Previously locked Mentor Period slot (Day {best_day}, Slot {best_slot}) conflicts with fixed slots for class {sem.code}. Mentor Period might be overridden.")
+        else:
+            for d in range(DAYS_PER_WEEK):
+                for s in range(SLOTS_PER_DAY):
+                    if s == 0:
+                        continue # Do not schedule mentor period on the first period
+                    if s in state.global_blocked_slots:
+                        continue
+                    if getattr(state, 'global_blocked_day_slots', set()) and (d, s) in state.global_blocked_day_slots:
+                        continue
+                    # Check if free in all matched semesters
+                    is_free = True
+                    for sem in matched_semesters:
+                        if state.is_slot_fixed(sem.id, d, s):
+                            is_free = False
+                            break
+                    
+                    if is_free:
+                        best_day, best_slot = d, s
+                        break
+                if best_day is not None:
+                    break
+
+            if best_day is None:
+                self.allocation_failures.append(f"[MENTOR PERIOD] Could not find a common free slot for {len(matched_semesters)} target classes.")
+                return []
+
+            # Update DB state only if we found a NEW slot
+            setting.is_scheduled = True
+            setting.scheduled_day = best_day
+            setting.scheduled_slot = best_slot
+            self.db.commit()
+
+        # Create allocations
+        allocations = []
+        for sem in matched_semesters:
+            room_id = default_classroom_map.get(sem.id)
+            entry = AllocationEntry(
+                semester_id=sem.id,
+                subject_id=None,
+                teacher_id=None,
+                room_id=room_id,
+                day=best_day,
+                slot=best_slot,
+                component_type=ComponentType.THEORY,
+                academic_component="mentor_period",
+                is_elective=False,
+                elective_basket_id=None,
+                batch_id=None
+            )
+            allocations.append(entry)
+            state.add_allocation(entry, force_parallel=True)
+            state.mark_slot_as_fixed(sem.id, best_day, best_slot)
+
+        # Globally block this slot for EVERYONE to ensure teachers remain free
+        state.global_blocked_day_slots.add((best_day, best_slot))
+        
+        return allocations
 
     def _pre_schedule_scbs(
         self,
@@ -5196,8 +5319,9 @@ class TimetableGenerator:
         unique = []
         for entry in allocations:
             # Prevent saving incomplete allocations (which violates DB NOT NULL constraints)
-            if entry.teacher_id is None or entry.subject_id is None or entry.room_id is None:
-                continue
+            if entry.academic_component != "mentor_period":
+                if entry.teacher_id is None or entry.subject_id is None or entry.room_id is None:
+                    continue
                 
             key = (entry.semester_id, entry.subject_id, entry.day, entry.slot, entry.batch_id, entry.teacher_id)
             if key not in seen:

@@ -40,6 +40,7 @@ class AcademicComponentType(str, Enum):
     REPORT = "report"
     SELF_STUDY = "self_study"
     SEMINAR = "seminar"
+    MENTOR_PERIOD = "mentor_period"
 
 
 class SubjectType(str, Enum):

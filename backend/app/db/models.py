@@ -1033,3 +1033,30 @@ class SystemSetting(Base):
     description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+# ============================================================================
+# MENTOR PERIOD MODEL
+# ============================================================================
+
+class MentorPeriod(Base):
+    """
+    Global Mentor Period Rule.
+    Configures a single common slot for selected departments, years, and classes.
+    """
+    __tablename__ = "mentor_periods"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    
+    # Selection criteria (Stored as comma-separated IDs or values)
+    departments: Mapped[Optional[str]] = mapped_column(String(500), nullable=True) # e.g. "1,2,3"
+    years: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)       # e.g. "1,2,3,4"
+    classes: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)    # e.g. "5,6,7"
+
+    # Scheduled State
+    is_scheduled: Mapped[bool] = mapped_column(Boolean, default=False)
+    scheduled_day: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    scheduled_slot: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

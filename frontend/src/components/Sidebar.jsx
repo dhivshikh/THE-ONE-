@@ -25,6 +25,7 @@ import {
     ClipboardList,
     BarChart3,
     ShieldCheck,
+    Star,
 } from 'lucide-react';
 import { useState } from 'react';
 import { useDepartmentContext } from '../context/DepartmentContext';
@@ -47,6 +48,7 @@ const navItems = [
     { path: '/room-availability', label: 'Room Availability', icon: DoorOpen },
     { path: '/timetable', label: 'View Timetable', icon: Calendar },
     { path: '/manage-timetable', label: 'Manage Slots', icon: Lock },
+    { path: '/mentor-period', label: 'Mentor Period', icon: Star },
     { path: '/substitution', label: 'Substitution', icon: UserCheck },
 
     { path: '/faculty-assignments', label: 'Assignments', icon: ClipboardList },

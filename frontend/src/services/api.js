@@ -385,11 +385,13 @@ export const timetableApi = {
   getExportPdfUrl: (type, id = null) => {
     if (type === 'semester') return `${api.defaults.baseURL}/timetable/export/semester/${id}`;
     if (type === 'department') return `${api.defaults.baseURL}/timetable/export/pdf/department/${id}`;
+    if (type === 'zip') return `${api.defaults.baseURL}/timetable/export/pdf/zip`;
     return `${api.defaults.baseURL}/timetable/export/pdf`;
   },
   getExportExcelUrl: (type, id = null) => {
     if (type === 'semester') return `${api.defaults.baseURL}/timetable/export/excel/semester/${id}`;
     if (type === 'department') return `${api.defaults.baseURL}/timetable/export/excel/department/${id}`;
+    if (type === 'zip') return `${api.defaults.baseURL}/timetable/export/excel/zip`;
     return `${api.defaults.baseURL}/timetable/export/excel/all`;
   },
 };

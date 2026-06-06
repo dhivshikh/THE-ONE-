@@ -70,6 +70,7 @@ from app.api import (
     department_import,
     class_import,
     room_import,
+    mentor_period,
 )
 
 settings = get_settings()
@@ -210,6 +211,7 @@ app.include_router(teacher_import.router, prefix="/api")
 app.include_router(department_import.router, prefix="/api")
 app.include_router(class_import.router, prefix="/api")
 app.include_router(room_import.router, prefix="/api")
+app.include_router(mentor_period.router, prefix="/api")
 
 
 @app.get("/")

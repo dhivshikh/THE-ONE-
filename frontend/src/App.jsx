@@ -23,6 +23,7 @@ import ReportsPage from './pages/ReportsPage';
 import MasterLabTimetablePage from './pages/MasterLabTimetablePage';
 import TeacherLoadDashboard from './pages/TeacherLoadDashboard';
 import RoomAvailabilityPage from './pages/RoomAvailabilityPage';
+import MentorPeriodPage from './pages/MentorPeriodPage';
 
 import FacultyAssignmentPage from './pages/FacultyAssignmentPage';
 import FacultyWorkloadPage from './pages/FacultyWorkloadPage';
@@ -49,6 +50,7 @@ function App() {
                 <Route path="/rooms" element={<RoomsPage />} />
                 <Route path="/timetable" element={<TimetablePage />} />
                 <Route path="/manage-timetable" element={<ManageTimetablePage />} />
+                <Route path="/mentor-period" element={<MentorPeriodPage />} />
                 <Route path="/generate" element={<GeneratePage />} />
                 <Route path="/substitution" element={<SubstitutionPage />} />
                 <Route path="/teacher-load" element={<TeacherLoadDashboard />} />

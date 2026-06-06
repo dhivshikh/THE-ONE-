@@ -139,6 +139,11 @@
     border-left: 3px solid var(--tutorial-border);
 }
 
+.slot-cell.mentor-period {
+    background: #fdf4ff; /* Tailwind fuchsia-50 */
+    border-left: 3px solid #d946ef; /* Tailwind fuchsia-500 */
+}
+
 .slot-cell.substituted {
     background: var(--warning-bg);
     border-left: 3px solid var(--warning);
@@ -374,6 +379,11 @@
     border: 1px solid var(--free-border);
 }
 
+.mentor-period-color {
+    background: #fdf4ff;
+    border: 1px solid #d946ef;
+}
+
 /* ── Responsive ─────────────────────────────────────────────────── */
 @media (max-width: 768px) {
     .timetable-container {
@@ -460,6 +470,7 @@
     position: fixed;
     inset: 0;
     background: rgba(15, 23, 42, 0.45);
+    -webkit-backdrop-filter: blur(4px);
     backdrop-filter: blur(4px);
     display: flex;
     align-items: center;

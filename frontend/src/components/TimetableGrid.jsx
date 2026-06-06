@@ -31,8 +31,9 @@ export default function TimetableGrid({ timetable, viewType = 'semester' }) {
     }
 
     // Dynamic Periods computation based on template
-    const breakSlots = timetable.break_slots || [1, 4]; // Default EVEN
-    const lunchSlot = timetable.lunch_slot !== undefined ? timetable.lunch_slot : 3;
+    // Dynamic Periods computation based on ODD SEM template
+    const breakSlots = [1]; // Break after 2nd period
+    const lunchSlot = 3; // Lunch after 4th period
 
     const PERIODS = [];
     const SLOT_TO_PERIOD_INDEX = {};
@@ -56,8 +57,8 @@ export default function TimetableGrid({ timetable, viewType = 'semester' }) {
     };
 
     for (let slot = 0; slot < 7; slot++) {
-        const isLastTwoPeriods = slot >= 4;
-        const duration = isLastTwoPeriods ? 50 : 60; // Just mimic the current static
+        const isLastTwoPeriods = slot >= 5; // Slots 5 and 6 (6th and 7th periods) are 50 mins
+        const duration = isLastTwoPeriods ? 50 : 60;
 
         const startTimeStr = formatTime(currentHour, currentMinute);
         const endTime = addMinutes(currentHour, currentMinute, duration);
@@ -177,8 +178,9 @@ export default function TimetableGrid({ timetable, viewType = 'semester' }) {
                                     {timetable.days.map((day, dayIdx) => {
                                         const slot = getSlotData(day, periodIdx);
                                         const isElective = slot?.is_elective;
-                                        const isEmpty = !slot || (!slot.subject_name && !isElective);
                                         const academicComponent = slot?.academic_component || slot?.component_type || null;
+                                        const isMentorPeriod = academicComponent === 'mentor_period';
+                                        const isEmpty = !slot || (!slot.subject_name && !isElective && !isMentorPeriod);
                                         const isLab = slot?.is_lab || academicComponent === 'lab';
                                         const isTutorial = academicComponent === 'tutorial';
                                         const isProject = academicComponent === 'project';
@@ -190,6 +192,7 @@ export default function TimetableGrid({ timetable, viewType = 'semester' }) {
                                         // Determine cell type class for color coding
                                         let typeClass = '';
                                         if (isEmpty) typeClass = 'free';
+                                        else if (academicComponent === 'mentor_period') typeClass = 'mentor-period';
                                         else if (isLab) typeClass = 'lab';
                                         else if (isTutorial) typeClass = 'tutorial';
                                         else if (isElective) typeClass = 'elective';
@@ -206,9 +209,9 @@ export default function TimetableGrid({ timetable, viewType = 'semester' }) {
                                                     <div className="slot-content">
                                                         <div className="slot-subject">
                                                             <BookOpen size={14} />
-                                                            <span>{isElective && viewType === 'semester' && slot.subject_name === "Elective" ? 'ELECTIVE' : slot.subject_name}</span>
+                                                            <span>{isElective && viewType === 'semester' && slot.subject_name === "Elective" ? 'ELECTIVE' : isMentorPeriod ? 'MENTOR PERIOD' : slot.subject_name}</span>
                                                         </div>
-                                                        {slot.subject_code && slot.subject_code !== "ELECTIVE" && (
+                                                        {slot.subject_code && slot.subject_code !== "ELECTIVE" && slot.subject_code !== "MENTOR PERIOD" && (
                                                             <span className="slot-code">{slot.subject_code}</span>
                                                         )}
 
@@ -236,7 +239,7 @@ export default function TimetableGrid({ timetable, viewType = 'semester' }) {
                                                             </div>
                                                         ) : (
                                                             <>
-                                                                {viewType === 'semester' && slot.teacher_name && (
+                                                                {viewType === 'semester' && slot.teacher_name && academicComponent !== 'mentor_period' && (
                                                                     <div className="slot-teacher">
                                                                         <User size={12} />
                                                                         <span>
@@ -260,18 +263,41 @@ export default function TimetableGrid({ timetable, viewType = 'semester' }) {
                                                                         <span>{slot.room_name}</span>
                                                                     </div>
                                                                 )}
+                                                                {viewType === 'teacher' && slot.batch_name && academicComponent !== 'mentor_period' && (
+                                                                    <div className="slot-batch" style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-secondary)' }}>
+                                                                        {slot.batch_name}
+                                                                    </div>
+                                                                )}
+                                                                {isTutorial && (
+                                                                    <span className="slot-badge tutorial-badge">TUT</span>
+                                                                )}
+                                                                {isProject && (
+                                                                    <span className="slot-badge elective-badge">PRJ</span>
+                                                                )}
+                                                                {isReport && (
+                                                                    <span className="slot-badge elective-badge">RPT</span>
+                                                                )}
+                                                                {isSelfStudy && (
+                                                                    <span className="slot-badge elective-badge">SS</span>
+                                                                )}
+                                                                {isSeminar && (
+                                                                    <span className="slot-badge elective-badge">SEM</span>
+                                                                )}
+                                                                {isElective && (
+                                                                    <span className="slot-badge elective-badge">ELECTIVE</span>
+                                                                )}
+                                                                {isSubstituted && (
+                                                                    <span className="slot-badge sub-badge">
+                                                                        <AlertTriangle size={10} />
+                                                                        SUB
+                                                                    </span>
+                                                                )}
                                                             </>
                                                         )}
 
                                                         <div className="slot-badges">
                                                             {isLab && (
                                                                 <span className="slot-badge lab-badge">LAB</span>
-                                                            )}
-                                                            {isTutorial && (
-                                                                <span className="slot-badge tutorial-badge">TUT</span>
-                                                            )}
-                                                            {isProject && (
-                                                                <span className="slot-badge elective-badge">PRJ</span>
                                                             )}
                                                             {isReport && (
                                                                 <span className="slot-badge elective-badge">RPT</span>
@@ -319,6 +345,10 @@ export default function TimetableGrid({ timetable, viewType = 'semester' }) {
                 <div className="legend-item">
                     <span className="legend-color elective-color"></span>
                     <span>Elective</span>
+                </div>
+                <div className="legend-item">
+                    <span className="legend-color mentor-period-color"></span>
+                    <span>Mentor Period</span>
                 </div>
                 <div className="legend-item">
                     <span className="legend-color free-color"></span>
