@@ -1,0 +1,32 @@
+﻿=== CLASS-SUBJECT-TEACHER (raw) ===
+  sem_id=1  subj_id=1 subj=CS301  teacher_id=9 teacher=AS01  comp=theory  room_id=None  batch_id=None  parallel=None
+  sem_id=2  subj_id=9 subj=CSOE1  teacher_id=9 teacher=AS01  comp=theory  room_id=None  batch_id=None  parallel=None
+  sem_id=1  subj_id=2 subj=CS302  teacher_id=10 teacher=KN02  comp=theory  room_id=None  batch_id=None  parallel=None
+  sem_id=1  subj_id=2 subj=CS302  teacher_id=10 teacher=KN02  comp=lab  room_id=3  batch_id=None  parallel=G1
+  sem_id=1  subj_id=3 subj=CS303  teacher_id=11 teacher=RK03  comp=theory  room_id=None  batch_id=None  parallel=None
+  sem_id=1  subj_id=3 subj=CS303  teacher_id=11 teacher=RK03  comp=lab  room_id=4  batch_id=None  parallel=G1
+  sem_id=1  subj_id=4 subj=CS304  teacher_id=12 teacher=PS04  comp=theory  room_id=None  batch_id=None  parallel=None
+  sem_id=2  subj_id=10 subj=CSOE2  teacher_id=12 teacher=PS04  comp=theory  room_id=None  batch_id=None  parallel=None
+  sem_id=1  subj_id=5 subj=CS305  teacher_id=13 teacher=MP05  comp=theory  room_id=None  batch_id=None  parallel=None
+  sem_id=1  subj_id=5 subj=CS305  teacher_id=13 teacher=MP05  comp=lab  room_id=5  batch_id=None  parallel=None
+  sem_id=2  subj_id=6 subj=CS501  teacher_id=14 teacher=DI06  comp=theory  room_id=None  batch_id=None  parallel=None
+  sem_id=2  subj_id=7 subj=CS502  teacher_id=15 teacher=SM07  comp=theory  room_id=None  batch_id=None  parallel=None
+  sem_id=2  subj_id=8 subj=CS503  teacher_id=16 teacher=AR08  comp=theory  room_id=None  batch_id=None  parallel=None
+  sem_id=2  subj_id=8 subj=CS503  teacher_id=16 teacher=AR08  comp=lab  room_id=3  batch_id=None  parallel=None
+
+=== SUBJECTS -> SEMESTERS ===
+  CS301 (id=1, elective=False, basket_id=None): sems=[1]
+  CS302 (id=2, elective=False, basket_id=None): sems=[1]
+  CS303 (id=3, elective=False, basket_id=None): sems=[1]
+  CS304 (id=4, elective=False, basket_id=None): sems=[1]
+  CS305 (id=5, elective=False, basket_id=None): sems=[1]
+  CS501 (id=6, elective=False, basket_id=None): sems=[2]
+  CS502 (id=7, elective=False, basket_id=None): sems=[2]
+  CS503 (id=8, elective=False, basket_id=None): sems=[2]
+  CSOE1 (id=9, elective=True, basket_id=1): sems=[2]
+  CSOE2 (id=10, elective=True, basket_id=1): sems=[2]
+
+=== REGENERATING with debug ===
+  success=True
+  message=Dept 1: Generated 31 slots (39 free)
+  total_allocated=None
