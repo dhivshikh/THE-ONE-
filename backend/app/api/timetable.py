@@ -949,3 +949,40 @@ def cleanup_fake_electives(db: Session = Depends(get_db)):
             "removed_count": 0,
             "message": f"Cleanup failed: {str(e)}"
         }
+# ============================================================================
+# CLEAR ALLOCATIONS ENDPOINT
+# ============================================================================
+
+@router.delete('/clear', status_code=status.HTTP_204_NO_CONTENT)
+def clear_allocations(
+    semester_id: Optional[int] = None,
+    dept_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Clear timetable allocations.
+    If semester_id is provided, clears for that semester.
+    If dept_id is provided, clears for that department.
+    If neither is provided, clears all allocations.
+    """
+    try:
+        query = db.query(Allocation)
+        
+        if semester_id:
+            query = query.filter(Allocation.semester_id == semester_id)
+        elif dept_id:
+            query = query.join(Semester, Allocation.semester_id == Semester.id).filter(
+                Semester.department_id == dept_id
+            )
+            
+        query.delete(synchronize_session=False)
+        db.commit()
+        
+        # Invalidate caches
+        cache.delete_pattern('timetable:*')
+        cache.delete_pattern('allocations:*')
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f'Failed to clear allocations: {e}', exc_info=True)
+        raise HTTPException(status_code=500, detail=f'Failed to clear allocations: {str(e)}')

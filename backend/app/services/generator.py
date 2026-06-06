@@ -3362,6 +3362,14 @@ class TimetableGenerator:
                     req = None
                     selected_tids = []
                     for cand in req_candidates:
+                        # Check if this exact subject is already allocated in this block
+                        existing_alloc_for_cand = next((r for r in all_allocations_to_make if r[0].subject_id == cand.subject_id), None)
+                        if existing_alloc_for_cand:
+                            # Join the existing session
+                            req = cand
+                            selected_tids = existing_alloc_for_cand[2]
+                            break
+
                         # NEW: UNIFIED MULTI-TEACHER LAB SCHEDULING for electives
                         tids = list(cand.teacher_ids) if cand.teacher_ids else []
                         if cand.assigned_teacher_id and cand.assigned_teacher_id not in tids:
@@ -3395,11 +3403,18 @@ class TimetableGenerator:
                     room = None
                     used_shared_room = False
 
-                    # Room selection for valid teacher allocation only.
-                    existing_alloc = next((r for _, r, tids, _ in all_allocations_to_make if set(tids).intersection(set(selected_tids))), None)
-                    room = existing_alloc
-                    used_shared_room = bool(existing_alloc)
-                    if not room:
+                    # Check if an existing allocation has already claimed this subject and teacher(s) in this block
+                    existing_alloc = next((r for r in all_allocations_to_make if r[0].subject_id == req.subject_id), None)
+                    
+                    if existing_alloc:
+                        # Re-use the exact same room and teachers from the existing allocation
+                        # for this subject in this block
+                        room = existing_alloc[1]
+                        used_shared_room = True
+                        selected_tids = existing_alloc[2]
+                        # We don't need to re-validate teachers because they are already verified
+                        # for this exact subject in this exact block by the first class.
+                    else:
                         for tid in selected_tids:
                             r_shared = shared_lab_room_by_teacher.get(tid)
                             if r_shared:
@@ -3407,15 +3422,15 @@ class TimetableGenerator:
                                 used_shared_room = True
                                 break
 
-                    if not room and req.assigned_room_id and req.assigned_room_id not in rooms_used_here:
-                        r_obj = room_by_id.get(req.assigned_room_id)
-                        if (
-                            r_obj
-                            and state.is_room_free(r_obj.id, day, s1)
-                            and state.is_room_free(r_obj.id, day, s2)
-                            and (not req.preferred_room_types or r_obj.room_type in req.preferred_room_types)
-                        ):
-                            room = r_obj
+                        if not room and req.assigned_room_id and req.assigned_room_id not in rooms_used_here:
+                            r_obj = room_by_id.get(req.assigned_room_id)
+                            if (
+                                r_obj
+                                and state.is_room_free(r_obj.id, day, s1)
+                                and state.is_room_free(r_obj.id, day, s2)
+                                and (not req.preferred_room_types or r_obj.room_type in req.preferred_room_types)
+                            ):
+                                room = r_obj
 
                     # STRICT ROOM LOCKING:
                     # Do not fallback to other rooms. Generator must use assigned room only.
@@ -3429,7 +3444,10 @@ class TimetableGenerator:
 
                     all_allocations_to_make.append((req, room, selected_tids, sem_id))
 
-                if not all_allocations_to_make:
+                # ================================================================
+                # ATOMIC COMMIT: Only commit if ALL classes can be allocated
+                # ================================================================
+                if len(all_allocations_to_make) != len(active_classes):
                     continue
 
                 # Commit one elective lab option per schedulable class at this block.
