@@ -6,7 +6,7 @@
  */
 import { useState, useEffect } from 'react';
 import { Lock, X, Calendar, Clock, BookOpen, User, AlertTriangle, CheckCircle } from 'lucide-react';
-import { fixedSlotsApi, subjectsApi, teachersApi } from '../services/api';
+import { fixedSlotsApi, subjectsApi, teachersApi, roomsApi } from '../services/api';
 import { useDepartmentContext } from '../context/DepartmentContext';
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
@@ -35,6 +35,7 @@ export default function LockSlotModal({
     const { deptId } = useDepartmentContext();
     const [subjects, setSubjects] = useState([]);
     const [teachers, setTeachers] = useState([]);
+    const [rooms, setRooms] = useState([]);
     const [loading, setLoading] = useState(false);
     const [validating, setValidating] = useState(false);
     const [error, setError] = useState(null);
@@ -43,6 +44,8 @@ export default function LockSlotModal({
     // Form state
     const [selectedSubjectId, setSelectedSubjectId] = useState('');
     const [selectedTeacherId, setSelectedTeacherId] = useState('');
+    const [selectedTeacherId2, setSelectedTeacherId2] = useState('');
+    const [selectedRoomId, setSelectedRoomId] = useState('');
     const [componentType, setComponentType] = useState('theory');
     const [academicComponent, setAcademicComponent] = useState('');
     const [lockReason, setLockReason] = useState('');
@@ -57,9 +60,10 @@ export default function LockSlotModal({
     const fetchData = async () => {
         try {
             setLoading(true);
-            const [subjectsRes, teachersRes] = await Promise.all([
+            const [subjectsRes, teachersRes, roomsRes] = await Promise.all([
                 subjectsApi.getAll({ deptId }),
                 teachersApi.getAll(true, deptId),
+                roomsApi.getAll({ deptId }),
             ]);
 
             // Filter subjects to only show those assigned to this class
@@ -70,6 +74,7 @@ export default function LockSlotModal({
 
             setSubjects(filteredSubjects.length > 0 ? filteredSubjects : allSubjects);
             setTeachers(teachersRes.data || []);
+            setRooms(roomsRes.data || []);
         } catch (err) {
             console.error('Failed to load data:', err);
             setError('Failed to load subjects and teachers');
@@ -81,6 +86,8 @@ export default function LockSlotModal({
     const resetForm = () => {
         setSelectedSubjectId('');
         setSelectedTeacherId('');
+        setSelectedTeacherId2('');
+        setSelectedRoomId('');
         setComponentType('theory');
         setAcademicComponent('');
         setLockReason('');
@@ -107,7 +114,8 @@ export default function LockSlotModal({
 
     const handleSubjectChange = (e) => {
         setSelectedSubjectId(e.target.value);
-        setSelectedTeacherId(''); // Reset teacher when subject changes
+        setSelectedTeacherId(''); // Reset teachers when subject changes
+        setSelectedTeacherId2('');
         setValidation(null);
     };
 
@@ -126,17 +134,43 @@ export default function LockSlotModal({
             setValidating(true);
             setError(null);
 
-            const res = await fixedSlotsApi.validate({
-                semester_id: semesterId,
-                day: day,
-                slot: slot,
-                subject_id: parseInt(selectedSubjectId),
-                teacher_id: parseInt(selectedTeacherId),
-                component_type: componentType,
-                academic_component: academicComponent || null,
-            });
+            let slotsToProcess = [slot];
+            if (componentType === 'lab') {
+                if (slot === 3) slotsToProcess.push(4);
+                else if (slot === 4) slotsToProcess.push(3);
+                else if (slot === 5) slotsToProcess.push(6);
+                else if (slot === 6) slotsToProcess.push(5);
+            }
 
-            setValidation(res.data);
+            const allResults = [];
+
+            for (const currentSlot of slotsToProcess) {
+                const payload = {
+                    semester_id: semesterId,
+                    day: day,
+                    slot: currentSlot,
+                    subject_id: parseInt(selectedSubjectId),
+                    teacher_id: parseInt(selectedTeacherId),
+                    component_type: componentType,
+                    academic_component: academicComponent || null,
+                };
+                
+                const res = await fixedSlotsApi.validate(payload);
+                allResults.push(res.data);
+                
+                if (componentType === 'lab' && selectedTeacherId2) {
+                    const payload2 = { ...payload, teacher_id: parseInt(selectedTeacherId2) };
+                    const res2 = await fixedSlotsApi.validate(payload2);
+                    allResults.push(res2.data);
+                }
+            }
+            
+            // Combine validation results
+            setValidation({
+                is_valid: allResults.every(r => r.is_valid),
+                errors: allResults.flatMap(r => r.errors || []),
+                warnings: allResults.flatMap(r => r.warnings || []),
+            });
         } catch (err) {
             console.error('Validation failed:', err);
             setError(err.response?.data?.detail?.message || 'Validation failed');
@@ -155,17 +189,35 @@ export default function LockSlotModal({
             setLoading(true);
             setError(null);
 
-            await fixedSlotsApi.create({
-                semester_id: semesterId,
-                day: day,
-                slot: slot,
-                subject_id: parseInt(selectedSubjectId),
-                teacher_id: parseInt(selectedTeacherId),
-                component_type: componentType,
-                academic_component: academicComponent || null,
-                lock_reason: lockReason || null,
-                locked_by: 'admin',
-            });
+            let slotsToProcess = [slot];
+            if (componentType === 'lab') {
+                if (slot === 3) slotsToProcess.push(4);
+                else if (slot === 4) slotsToProcess.push(3);
+                else if (slot === 5) slotsToProcess.push(6);
+                else if (slot === 6) slotsToProcess.push(5);
+            }
+
+            for (const currentSlot of slotsToProcess) {
+                const payload = {
+                    semester_id: semesterId,
+                    day: day,
+                    slot: currentSlot,
+                    subject_id: parseInt(selectedSubjectId),
+                    teacher_id: parseInt(selectedTeacherId),
+                    room_id: selectedRoomId ? parseInt(selectedRoomId) : null,
+                    component_type: componentType,
+                    academic_component: academicComponent || null,
+                    lock_reason: lockReason || null,
+                    locked_by: 'admin',
+                };
+                
+                await fixedSlotsApi.create(payload);
+                
+                if (componentType === 'lab' && selectedTeacherId2) {
+                    const payload2 = { ...payload, teacher_id: parseInt(selectedTeacherId2) };
+                    await fixedSlotsApi.create(payload2);
+                }
+            }
 
             onSlotLocked && onSlotLocked();
             onClose();
@@ -280,6 +332,46 @@ export default function LockSlotModal({
                                     <option value="theory">Theory</option>
                                     <option value="lab">Lab</option>
                                     <option value="tutorial">Tutorial</option>
+                                </select>
+                            </div>
+
+                            {/* Teacher 2 Selection (Only for Lab) */}
+                            {componentType === 'lab' && (
+                                <div className="lock-slot-form-group">
+                                    <label>Select Teacher 2 (Optional)</label>
+                                    <select
+                                        value={selectedTeacherId2}
+                                        onChange={(e) => {
+                                            setSelectedTeacherId2(e.target.value);
+                                            setValidation(null);
+                                        }}
+                                        disabled={!selectedSubjectId}
+                                    >
+                                        <option value="">-- Choose a second teacher --</option>
+                                        {availableTeachers
+                                            .filter(t => t.id.toString() !== selectedTeacherId)
+                                            .map(teacher => (
+                                                <option key={teacher.id} value={teacher.id}>
+                                                    {teacher.name}
+                                                </option>
+                                            ))}
+                                    </select>
+                                </div>
+                            )}
+
+                            {/* Room Selection (Optional) */}
+                            <div className="lock-slot-form-group">
+                                <label>Select Room (Optional)</label>
+                                <select
+                                    value={selectedRoomId}
+                                    onChange={(e) => setSelectedRoomId(e.target.value)}
+                                >
+                                    <option value="">-- Let generator decide --</option>
+                                    {rooms.map(room => (
+                                        <option key={room.id} value={room.id}>
+                                            {room.name} ({room.capacity} seats) - {room.room_type}
+                                        </option>
+                                    ))}
                                 </select>
                             </div>
 

@@ -164,40 +164,58 @@ export default function ManageTimetablePage() {
         return dayData.slots[slot];
     };
 
-    // Get fixed slot for a position
-    const getFixedSlot = (day, slot) => {
-        return fixedSlots.find(fs => fs.day === day && fs.slot === slot);
+    // Get fixed slots for a position (returns an array to handle multi-teacher blocks)
+    const getFixedSlotsForPosition = (day, slot) => {
+        return fixedSlots.filter(fs => fs.day === day && fs.slot === slot);
     };
 
     // Render a slot cell
     const renderSlotCell = (day, slot) => {
         const slotData = getSlotData(day, slot);
-        const fixedSlot = getFixedSlot(day, slot);
+        const fixedSlotsAtPos = getFixedSlotsForPosition(day, slot);
 
-        // If there's a fixed slot, show it with lock indicator
-        if (fixedSlot) {
-            const comp = fixedSlot.academic_component;
+        // If there are fixed slots, show them with lock indicator
+        if (fixedSlotsAtPos.length > 0) {
+            const mainSlot = fixedSlotsAtPos[0];
+            const comp = mainSlot.academic_component;
             const showComp = comp && !['theory', 'lab', 'tutorial'].includes(comp);
+            
+            // Combine all teacher names
+            const teacherNames = fixedSlotsAtPos.map(fs => fs.teacher_name).join(', ');
+            
             return (
                 <div className="manage-slot-cell locked" key={`${day}-${slot}`}>
                     <div className="slot-lock-indicator">
                         <Lock size={14} />
                     </div>
                     <div className="slot-content">
-                        <div className="slot-subject">{fixedSlot.subject_name}</div>
-                        <div className="slot-code">{fixedSlot.subject_code}</div>
+                        <div className="slot-subject">{mainSlot.subject_name}</div>
+                        <div className="slot-code">{mainSlot.subject_code}</div>
                         {showComp && (
                             <div className="slot-code" style={{ fontSize: '11px', opacity: 0.9 }}>
                                 {comp.toUpperCase()}
                             </div>
                         )}
-                        <div className="slot-teacher">{fixedSlot.teacher_name}</div>
+                        <div className="slot-teacher">{teacherNames}</div>
+                        {mainSlot.room_name && (
+                            <div className="slot-room">{mainSlot.room_name}</div>
+                        )}
                     </div>
                     <button
                         className="slot-unlock-btn"
-                        onClick={(e) => {
+                        onClick={async (e) => {
                             e.stopPropagation();
-                            handleUnlockSlot(fixedSlot.id);
+                            try {
+                                for (const fs of fixedSlotsAtPos) {
+                                    await fixedSlotsApi.delete(fs.id);
+                                }
+                                setSuccessMessage('Slot(s) unlocked successfully');
+                                setTimeout(() => setSuccessMessage(null), 3000);
+                                fetchData();
+                            } catch (err) {
+                                console.error('Failed to unlock slot(s):', err);
+                                setError('Failed to unlock slot(s)');
+                            }
                         }}
                         title="Unlock this slot"
                     >

@@ -1065,6 +1065,14 @@ class TimetableGenerator:
             req = next((r for r in all_requirements if r.semester_id == sem_id and r.subject_id == subj_id and r.component_type.value == "lab"), None)
             if req:
                 expected_teachers = set(req.teacher_ids) if req.teacher_ids else set([req.assigned_teacher_id] if req.assigned_teacher_id else [])
+                
+                # Merge manually locked teachers into the expected set to prevent strict validation failures
+                if state.is_slot_fixed(sem_id, day, slot):
+                    continue  # Completely bypass validation for manually overridden fixed slots
+                else:
+                    locked_teachers = set(a.teacher_id for a in allocs if getattr(a, "is_locked", False) and a.teacher_id)
+                    expected_teachers.update(locked_teachers)
+                
                 actual_teachers = set(a.teacher_id for a in allocs if a.teacher_id)
                 if expected_teachers and expected_teachers != actual_teachers:
                     validation_failed = True
@@ -4337,8 +4345,10 @@ class TimetableGenerator:
         
         for req in failed_reqs:
             sem_id = req.semester_id
-            teacher_id = req.assigned_teacher_id
-            if not teacher_id:
+            teacher_ids = req.teacher_ids or []
+            if req.assigned_teacher_id and req.assigned_teacher_id not in teacher_ids:
+                teacher_ids.append(req.assigned_teacher_id)
+            if not teacher_ids:
                 continue
             
             blocks_needed = req.hours_per_week // 2
@@ -4351,9 +4361,14 @@ class TimetableGenerator:
                 candidate_swaps = []
                 for day in range(DAYS_PER_WEEK):
                     for (start_slot, end_slot) in self.valid_lab_blocks:
-                        # Check teacher is free at BOTH slots
-                        if not (state.is_teacher_eligible(teacher_id, day, start_slot) and
-                                state.is_teacher_eligible(teacher_id, day, end_slot)):
+                        # Check all teachers are free at BOTH slots
+                        all_free = True
+                        for tid in teacher_ids:
+                            if not (state.is_teacher_eligible(tid, day, start_slot) and
+                                    state.is_teacher_eligible(tid, day, end_slot)):
+                                all_free = False
+                                break
+                        if not all_free:
                             continue
                         
                         # Check if semester has THEORY (swappable) allocations at these slots
@@ -4411,18 +4426,20 @@ class TimetableGenerator:
                     
                     # Place the lab block
                     for idx, slot in enumerate([start_slot, end_slot]):
-                        entry = AllocationEntry(
-                            semester_id=sem_id,
-                            subject_id=req.subject_id,
-                            teacher_id=teacher_id,
-                            room_id=lab_room.id,
-                            day=day,
-                            slot=slot,
-                            component_type=req.component_type,
-                            academic_component=req.academic_component,
-                            is_lab_continuation=(idx == 1)
-                        )
-                        state.add_allocation(entry)
+                        for tid in teacher_ids:
+                            entry = AllocationEntry(
+                                semester_id=sem_id,
+                                subject_id=req.subject_id,
+                                teacher_id=tid,
+                                room_id=lab_room.id,
+                                day=day,
+                                slot=slot,
+                                component_type=req.component_type,
+                                academic_component=req.academic_component,
+                                is_lab_continuation=(idx == 1),
+                                batch_id=None
+                            )
+                            state.add_allocation(entry, force_parallel=True)
                     
                     # Try to re-schedule displaced theory into open slots
                     reschedule_ok = True

@@ -971,8 +971,10 @@ def clear_allocations(
         if semester_id:
             query = query.filter(Allocation.semester_id == semester_id)
         elif dept_id:
-            query = query.join(Semester, Allocation.semester_id == Semester.id).filter(
-                Semester.department_id == dept_id
+            query = query.filter(
+                Allocation.semester_id.in_(
+                    db.query(Semester.id).filter(Semester.department_id == dept_id)
+                )
             )
             
         query.delete(synchronize_session=False)

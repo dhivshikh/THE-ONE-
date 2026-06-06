@@ -84,9 +84,20 @@ def _validate_slot_lock(
     if exclude_fixed_slot_id:
         existing_fixed = existing_fixed.filter(FixedSlot.id != exclude_fixed_slot_id)
     
-    if existing_fixed.first():
-        errors.append(f"Slot is already locked for this class")
-        return FixedSlotValidation(is_valid=False, errors=errors, warnings=warnings)
+    existing_slots = existing_fixed.all()
+    if existing_slots:
+        # Check if we are locking the SAME subject in a LAB or TUTORIAL
+        if component_type in (ComponentType.LAB, ComponentType.TUTORIAL):
+            for es in existing_slots:
+                if es.subject_id != subject_id:
+                    errors.append(f"Slot is already locked for this class by another subject")
+                elif es.teacher_id == teacher_id:
+                    errors.append(f"Teacher is already locked in this slot for this class")
+        else:
+            errors.append(f"Slot is already locked for this class")
+            
+        if errors:
+            return FixedSlotValidation(is_valid=False, errors=errors, warnings=warnings)
     
     # Check teacher is assigned to this subject for this class
     assignment = db.query(ClassSubjectTeacher).filter(

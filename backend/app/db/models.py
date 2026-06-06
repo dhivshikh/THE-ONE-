@@ -844,7 +844,7 @@ class FixedSlot(Base):
     
     # Unique constraint: Only one fixed slot per (semester, day, slot)
     __table_args__ = (
-        UniqueConstraint("semester_id", "day", "slot", name="uq_fixed_slot_position"),
+        # UniqueConstraint("semester_id", "day", "slot", name="uq_fixed_slot_position"),
     )
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
